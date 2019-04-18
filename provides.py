@@ -2,6 +2,7 @@ import datetime
 import os
 
 from charmhelpers.core import hookenv
+
 from charms.reactive import hook
 from charms.reactive import RelationBase
 from charms.reactive import scopes
@@ -20,10 +21,15 @@ class LocalMonitorsProvides(RelationBase):
 
     def add_check(self, args, name=None, description=None, context=None,
                   servicegroups=None, unit=None):
+        nagios_files = self.get_local('nagios.check.files', [])
+
         if not unit:
             unit = hookenv.local_unit()
         unit = unit.replace('/', '-')
-        nagios_files = self.get_local('nagios.check.files', [])
+        context = self.get_remote('nagios_host_context', context)
+        host_name = self.get_remote('nagios_hostname',
+                                    '%s-%s' % (context, unit))
+
         check_tmpl = """
 #---------------------------------------------------
 # This file is Juju managed
@@ -36,13 +42,13 @@ command[%(check_name)s]=%(check_args)s
 #---------------------------------------------------
 define service {
     use                             active-service
-    host_name                       juju-%(unit_name)s
+    host_name                       %(host_name)s
     service_description             %(description)s
     check_command                   check_nrpe!%(check_name)s
     servicegroups                   %(servicegroups)s
 }
 """
-        check_filename = "/etc/nagios/nrpe.d/%s.cfg" % (name)
+        check_filename = "/etc/nagios/nrpe.d/check_%s.cfg" % (name)
         with open(check_filename, "w") as fh:
             fh.write(check_tmpl % {
                 'check_args': ' '.join(args),
@@ -58,9 +64,11 @@ define service {
                 'context': context,
                 'description': description,
                 'check_name': name,
+                'host_name': host_name,
                 'unit_name': unit,
             })
         nagios_files.append(service_filename)
+
         self.set_local('nagios.check.files', nagios_files)
 
     def removed(self):
@@ -81,4 +89,3 @@ define service {
             'timestamp': datetime.datetime.now().isoformat(),
         }
         self.set_remote(**relation_info)
-        self.remove_state('{relation_name}.available')
